@@ -184,12 +184,13 @@ class ResidualAttentionBlock(nn.Module):
 
     def attention(self, x: torch.Tensor):
         self.attn_mask = self.attn_mask.to(dtype=x.dtype, device=x.device) if self.attn_mask is not None else None
-        return self.attn(x, x, x, need_weights=False, attn_mask=self.attn_mask)[0]
+        return self.attn(x, x, x, need_weights=True, attn_mask=self.attn_mask, average_attn_weights=False)
 
     def forward(self, x: torch.Tensor):
-        x = x + self.attention(self.ln_1(x))
+        attention_res = self.attention(self.ln_1(x))
+        x, weights = x+attention_res[0], attention_res[1]
         x = x + self.mlp(self.ln_2(x))
-        return x
+        return x, weights
 
 
 class Transformer(nn.Module):
@@ -200,7 +201,13 @@ class Transformer(nn.Module):
         self.resblocks = nn.Sequential(*[ResidualAttentionBlock(width, heads, attn_mask) for _ in range(layers)])
 
     def forward(self, x: torch.Tensor):
-        return self.resblocks(x)
+        weights_all_blocks = []
+        
+        for block in self.resblocks:
+            x, weight = block(x)
+            weights_all_blocks.append(weight)
+        
+        return x, torch.stack(weights_all_blocks)
 
 
 class VisionTransformer(nn.Module):
@@ -229,7 +236,7 @@ class VisionTransformer(nn.Module):
         x = self.ln_pre(x)
 
         x = x.permute(1, 0, 2)  # NLD -> LND
-        x = self.transformer(x)
+        x, weights = self.transformer(x)
         x = x.permute(1, 0, 2)  # LND -> NLD
 
         x = self.ln_post(x[:, 0, :])
@@ -237,7 +244,7 @@ class VisionTransformer(nn.Module):
         if self.proj is not None:
             x = x @ self.proj
 
-        return x
+        return x, weights
 
 
 class CLIP(nn.Module):
@@ -345,7 +352,7 @@ class CLIP(nn.Module):
 
         x = x + self.positional_embedding.type(self.dtype)
         x = x.permute(1, 0, 2)  # NLD -> LND
-        x = self.transformer(x)
+        x, weights = self.transformer(x)
         x = x.permute(1, 0, 2)  # LND -> NLD
         x = self.ln_final(x).type(self.dtype)
 
@@ -353,7 +360,7 @@ class CLIP(nn.Module):
         # take features from the eot embedding (eot_token is the highest number in each sequence)
         x = x[torch.arange(x.shape[0]), text.argmax(dim=-1)] @ self.text_projection
 
-        return x
+        return x, weights
 
     def forward(self, image, text):
         image_features = self.encode_image(image)
