@@ -9,6 +9,7 @@ import torch
 from PIL import Image
 from torchvision.transforms import Compose, Resize, CenterCrop, ToTensor, Normalize
 from tqdm import tqdm
+import numpy as np
 
 from .model import build_model
 from .simple_tokenizer import SimpleTokenizer as _Tokenizer
@@ -24,7 +25,7 @@ if packaging.version.parse(torch.__version__) < packaging.version.parse("1.7.1")
     warnings.warn("PyTorch version 1.7.1 or higher is recommended")
 
 
-__all__ = ["available_models", "load", "tokenize"]
+__all__ = ["available_models", "load", "tokenize", "get_image_attn_mask"]
 _tokenizer = _Tokenizer()
 
 _MODELS = {
@@ -235,3 +236,37 @@ def tokenize(texts: Union[str, List[str]], context_length: int = 77, truncate: b
         result[i, :len(tokens)] = torch.tensor(tokens)
 
     return result
+
+def get_image_attn_mask(img, att_mat, avg=False, layer=-1):
+    # https://github.com/jeonsworld/ViT-pytorch/blob/main/visualize_attention_map.ipynb
+    att_mat = att_mat.cpu().squeeze(1)
+    
+    # Average the attention weights across all heads.
+    att_mat = att_mat.mean(dim=1)
+
+    # To account for residual connections, we add an identity matrix to the
+    # attention matrix and re-normalize the weights.
+    residual_att = torch.eye(att_mat.size(1))
+    aug_att_mat = att_mat + residual_att
+    aug_att_mat = aug_att_mat / aug_att_mat.sum(dim=-1).unsqueeze(-1)
+
+    # Recursively multiply the weight matrices
+    joint_attentions = torch.zeros(aug_att_mat.size())
+    joint_attentions[0] = aug_att_mat[0]
+
+    for n in range(1, aug_att_mat.size(0)):
+        joint_attentions[n] = torch.matmul(aug_att_mat[n], joint_attentions[n-1])
+    
+    # Attention from the output token to the input space.
+    if avg:
+        v = joint_attentions.mean(dim=0)
+    else:
+        v = joint_attentions[layer]
+        
+    grid_size = int(np.sqrt(aug_att_mat.size(-1)))
+    mask = v[0, 1:].reshape(grid_size, grid_size)
+    mask = np.asarray(Image.fromarray(mask.numpy()).resize(img.size))
+    mask -= mask.min()
+    mask /= mask.max()
+    
+    return mask
