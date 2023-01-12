@@ -403,7 +403,7 @@ def convert_weights(model: nn.Module):
     model.apply(_convert_weights_to_fp16)
 
 
-def build_model(state_dict: dict):
+def build_model(state_dict: dict, name: str = ""):
     vit = "visual.proj" in state_dict
 
     if vit:
@@ -440,4 +440,17 @@ def build_model(state_dict: dict):
 
     convert_weights(model)
     model.load_state_dict(state_dict)
+
+    print(f"Model stats for {name}")
+    print(f"- vision_width: {vision_width}")
+    print(f"- vision_layers: {vision_layers}")
+    print(f"- vision_patch_size: {vision_patch_size}")
+    print(f"- grid_size: {grid_size}")
+    print(f"- image_resolution: {image_resolution}")
+    print(f"- context_length: {context_length}")
+    print(f"- vocab_size: {vocab_size}")
+    print(f"- transformer_width: {transformer_width}")
+    print(f"- transformer_heads: {transformer_heads}")
+    print(f"- transformer_layers: {transformer_layers}")
+    print(f"- total number of parameters: {np.sum([int(np.prod(p.shape)) for p in model.parameters()]):,}")
     return model.eval()
