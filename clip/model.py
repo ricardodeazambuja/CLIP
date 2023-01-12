@@ -363,8 +363,8 @@ class CLIP(nn.Module):
         return x, weights
 
     def forward(self, image, text):
-        image_features = self.encode_image(image)
-        text_features = self.encode_text(text)
+        image_features, _ = self.encode_image(image)
+        text_features, _ = self.encode_text(text)
 
         # normalized features
         image_features = image_features / image_features.norm(dim=1, keepdim=True)
