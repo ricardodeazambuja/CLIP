@@ -2,7 +2,7 @@ import hashlib
 import os
 import urllib
 import warnings
-from typing import Any, Union, List
+from typing import Union, List
 from pkg_resources import packaging
 
 import torch
@@ -265,7 +265,7 @@ def get_image_attn_mask(img, att_mat, avg=False, layer=-1):
         
     grid_size = int(np.sqrt(aug_att_mat.size(-1)))
     mask = v[0, 1:].reshape(grid_size, grid_size)
-    mask = np.asarray(Image.fromarray(mask.numpy()).resize(img.size))
+    mask = np.asarray(Image.fromarray(mask.numpy()).resize(img.size)).copy()
     mask -= mask.min()
     mask /= mask.max()
     
