@@ -243,6 +243,9 @@ class CLIP(nn.Module):
         return self.visual(image.type(self.dtype))
 
     def encode_text(self, text):
+        # Here text is the input "tokenized" text (clip.tokenize). 
+        # It has shape = [batch, context_length]
+        
         x = self.token_embedding(text).type(self.dtype)  # [batch_size, context_length, transformer_width]
                                                          # transformer_width => d_model => token embeddings
                                                          # context_length => sentence_length
@@ -266,10 +269,9 @@ class CLIP(nn.Module):
         # x.shape = [batch_size, context_length, transformer_width]
         x = self.ln_final(x).type(self.dtype)
 
-        # Take features ONLY from the eot embedding (eot_token is the highest number in each sequence).
-        # Although we are only using that token, it went through all the transformer layers, 
+        # Take features ONLY from the eot embedding. The eot_token is the token with the highest value (index) in each sequence.
+        # Although we are only using that token, it went through all the transformer layers,
         # so it carries lots if information (but I don't know why they chose exactly the last one)
-        # Here text is the input "tokenized" text. It has shape = [batch, context_length]
         x = x[torch.arange(x.shape[0]), text.argmax(dim=-1), :] @ self.text_projection  # I added the ":" for clarity...
         # The operation is [batch_size, transformer_width] x [transformer_width, output_embed_dim] = [batch_size, output_embed_dim]
 
