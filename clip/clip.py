@@ -9,7 +9,6 @@ import torch
 from PIL import Image
 from torchvision.transforms import Compose, Resize, CenterCrop, ToTensor, Normalize
 from tqdm import tqdm
-import numpy as np
 
 from .model import build_model
 from .simple_tokenizer import SimpleTokenizer as _Tokenizer
@@ -25,15 +24,10 @@ if packaging.version.parse(torch.__version__) < packaging.version.parse("1.7.1")
     warnings.warn("PyTorch version 1.7.1 or higher is recommended")
 
 
-__all__ = ["available_models", "load", "tokenize", "get_image_attn_mask"]
+__all__ = ["available_models", "load", "tokenize"]
 _tokenizer = _Tokenizer()
 
 _MODELS = {
-    "RN50": "https://openaipublic.azureedge.net/clip/models/afeb0e10f9e5a86da6080e35cf09123aca3b358a0c3e3b6c78a7b63bc04b6762/RN50.pt",
-    "RN101": "https://openaipublic.azureedge.net/clip/models/8fa8567bab74a42d41c5915025a8e4538c3bdbe8804a470a72f30b0d94fab599/RN101.pt",
-    "RN50x4": "https://openaipublic.azureedge.net/clip/models/7e526bd135e493cef0776de27d5f42653e6b4c8bf9e0f653bb11773263205fdd/RN50x4.pt",
-    "RN50x16": "https://openaipublic.azureedge.net/clip/models/52378b407f34354e150460fe41077663dd5b39c54cd0bfd2b27167a4a06ec9aa/RN50x16.pt",
-    "RN50x64": "https://openaipublic.azureedge.net/clip/models/be1cfb55d75a9666199fb2206c106743da0f6468c9d327f3e0d0a543a9919d9c/RN50x64.pt",
     "ViT-B/32": "https://openaipublic.azureedge.net/clip/models/40d365715913c9da98579312b702a82c18be219cc2a73407c4526f58eba950af/ViT-B-32.pt",
     "ViT-B/16": "https://openaipublic.azureedge.net/clip/models/5806e77cd80f8b59890b7e101eabd078d9fb84e6937f9e85e4ecb61988df416f/ViT-B-16.pt",
     "ViT-L/14": "https://openaipublic.azureedge.net/clip/models/b8cca3fd41ae0c99ba7e8951adf17d267cdb84cd88be6f7c2e0eca1737a03836/ViT-L-14.pt",
@@ -92,7 +86,8 @@ def available_models() -> List[str]:
     return list(_MODELS.keys())
 
 
-def load(name: str, device: Union[str, torch.device] = "cuda" if torch.cuda.is_available() else "cpu", jit: bool = False, download_root: str = None):
+def load(name: str, device: Union[str, torch.device] = "cuda" if torch.cuda.is_available() else "cpu", 
+         jit: bool = False, download_root: str = None, fp16: bool = True):
     """Load a CLIP model
 
     Parameters
@@ -109,6 +104,9 @@ def load(name: str, device: Union[str, torch.device] = "cuda" if torch.cuda.is_a
     download_root: str
         path to download the model files; by default, it uses "~/.cache/clip"
 
+    fp16: bool
+        convert the model to fp16
+
     Returns
     -------
     model : torch.nn.Module
@@ -117,7 +115,9 @@ def load(name: str, device: Union[str, torch.device] = "cuda" if torch.cuda.is_a
     preprocess : Callable[[PIL.Image], torch.Tensor]
         A torchvision transform that converts a PIL image into a tensor that the returned model can take as its input
     """
-    if name in _MODELS:
+    if "RN" in name:
+        raise ValueError("Modified to work only with ViT image encoders...")
+    elif name in _MODELS:
         model_path = _download(_MODELS[name], download_root or os.path.expanduser("~/.cache/clip"))
     elif os.path.isfile(name):
         model_path = name
@@ -137,7 +137,7 @@ def load(name: str, device: Union[str, torch.device] = "cuda" if torch.cuda.is_a
             state_dict = torch.load(opened_file, map_location="cpu")
 
     if not jit:
-        model = build_model(state_dict or model.state_dict(), name).to(device)
+        model = build_model(state_dict or model.state_dict(), name, fp16).to(device)
         if str(device) == "cpu":
             model.float()
         return model, _transform(model.visual.input_resolution)
@@ -236,37 +236,3 @@ def tokenize(texts: Union[str, List[str]], context_length: int = 77, truncate: b
         result[i, :len(tokens)] = torch.tensor(tokens)
 
     return result
-
-def get_image_attn_mask(img, att_mat, avg=False, layer=-1):
-    # https://github.com/jeonsworld/ViT-pytorch/blob/main/visualize_attention_map.ipynb
-    att_mat = att_mat.cpu().squeeze(1)
-    
-    # Average the attention weights across all heads.
-    att_mat = att_mat.mean(dim=1)
-
-    # To account for residual connections, we add an identity matrix to the
-    # attention matrix and re-normalize the weights.
-    residual_att = torch.eye(att_mat.size(1))
-    aug_att_mat = att_mat + residual_att
-    aug_att_mat = aug_att_mat / aug_att_mat.sum(dim=-1).unsqueeze(-1)
-
-    # Recursively multiply the weight matrices
-    joint_attentions = torch.zeros(aug_att_mat.size())
-    joint_attentions[0] = aug_att_mat[0]
-
-    for n in range(1, aug_att_mat.size(0)):
-        joint_attentions[n] = torch.matmul(aug_att_mat[n], joint_attentions[n-1])
-    
-    # Attention from the output token to the input space.
-    if avg:
-        v = joint_attentions.mean(dim=0)
-    else:
-        v = joint_attentions[layer]
-        
-    grid_size = int(np.sqrt(aug_att_mat.size(-1)))
-    mask = v[0, 1:].reshape(grid_size, grid_size)
-    mask = np.asarray(Image.fromarray(mask.numpy()).resize(img.size)).copy()
-    mask -= mask.min()
-    mask /= mask.max()
-    
-    return mask
